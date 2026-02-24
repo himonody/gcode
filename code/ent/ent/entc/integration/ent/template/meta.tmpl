@@ -1,0 +1,25 @@
+{{/*
+Copyright 2019-present Facebook Inc. All rights reserved.
+This source code is licensed under the Apache 2.0 license found
+in the LICENSE file in the root directory of this source tree.
+*/}}
+
+{{/* A template for adding additional fields to specific types. */}}
+{{ define "meta/additional/enums" }}
+	{{- range $f := $.EnumFields }}
+		{{- if not $f.HasGoType }}
+			{{ $enum := trimPackage $f.Type.String $.Package }}
+			{{ $receiver := receiver $f.BuilderField }}
+
+			// Ptr returns a new pointer to the enum value.
+			func ({{ $receiver }} {{ $enum }}) Ptr() *{{ $enum }} {
+				return &{{ $receiver }}
+			}
+		{{- end }}
+	{{- end }}
+{{ end }}
+
+
+{{ define "meta/additional/random" }}
+	// comment from another template.
+{{ end }}

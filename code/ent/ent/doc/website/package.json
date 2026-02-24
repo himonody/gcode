@@ -1,0 +1,35 @@
+{
+  "scripts": {
+    "examples": "docusaurus-examples",
+    "start": "NODE_OPTIONS=--openssl-legacy-provider docusaurus start",
+    "build": "docusaurus build",
+    "publish-gh-pages": "docusaurus-publish",
+    "write-translations": "docusaurus write-translations",
+    "version": "docusaurus-version",
+    "rename-version": "docusaurus-rename-version",
+    "swizzle": "docusaurus swizzle",
+    "deploy": "docusaurus deploy",
+    "docusaurus": "docusaurus",
+    "crowdin": "crowdin",
+    "crowdin:sync": "docusaurus write-translations && crowdin upload && crowdin download"
+  },
+  "dependencies": {
+    "@crowdin/cli": "3",
+    "@docusaurus/core": "^2.4.3",
+    "@docusaurus/plugin-client-redirects": "^2.4.3",
+    "@docusaurus/preset-classic": "^2.4.3",
+    "clsx": "^1.1.1",
+    "docusaurus": "^1.14.7",
+    "react": "^17.0.1",
+    "react-dom": "^17.0.1",
+    "react-github-btn": "^1.2.0"
+  },
+  "resolutions": {
+    "glob-parent": "^5.1.2",
+    "trim": "^0.0.3",
+    "browserslist": "^4.16.5",
+    "axios": "0.21.3",
+    "set-value": "^4.0.1",
+    "immer": "^9.0.6"
+  }
+}
