@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
+
 	"strings"
 	"syscall"
 	"time"
@@ -18,57 +18,60 @@ import (
 var brokers = []string{"localhost:9092"}
 
 func main() {
-	if env := os.Getenv("BROKERS"); env != "" {
-		brokers = strings.Split(env, ",")
-	}
-
-	if len(os.Args) < 3 {
-		fmt.Println("Usage:")
-		fmt.Println("  go run main.go produce <topic> <message>")
-		fmt.Println("  go run main.go consume <topic>")
-		fmt.Println("  go run main.go create-topic <topic> [partitions] [replicationFactor]")
-		return
-	}
-
-	cmd := os.Args[1]
-	topic := os.Args[2]
-
-	switch cmd {
-	case "produce":
-		if len(os.Args) < 4 {
-			log.Fatalf("produce requires a message argument")
-		}
-		message := strings.Join(os.Args[3:], " ")
-		if err := produceMessage(topic, message); err != nil {
-			log.Fatalf("produce failed: %v", err)
-		}
-	case "consume":
-		if err := consumeTopic(topic); err != nil {
-			log.Fatalf("consume failed: %v", err)
-		}
-	case "create-topic":
-		partitions := 1
-		replication := int16(1)
-		if len(os.Args) >= 4 {
-			if p, err := strconv.Atoi(os.Args[3]); err == nil && p > 0 {
-				partitions = p
-			} else {
-				log.Fatalf("invalid partitions: %v", os.Args[3])
-			}
-		}
-		if len(os.Args) >= 5 {
-			if r, err := strconv.Atoi(os.Args[4]); err == nil && r > 0 {
-				replication = int16(r)
-			} else {
-				log.Fatalf("invalid replicationFactor: %v", os.Args[4])
-			}
-		}
-		if err := createTopic(topic, partitions, replication); err != nil {
-			log.Fatalf("create-topic failed: %v", err)
-		}
-	default:
-		log.Fatalf("unknown command %q", cmd)
-	}
+	a := 6.3
+	b := 6.3
+	fmt.Println(a == b)
+	//if env := os.Getenv("BROKERS"); env != "" {
+	//	brokers = strings.Split(env, ",")
+	//}
+	//
+	//if len(os.Args) < 3 {
+	//	fmt.Println("Usage:")
+	//	fmt.Println("  go run main.go produce <topic> <message>")
+	//	fmt.Println("  go run main.go consume <topic>")
+	//	fmt.Println("  go run main.go create-topic <topic> [partitions] [replicationFactor]")
+	//	return
+	//}
+	//
+	//cmd := os.Args[1]
+	//topic := os.Args[2]
+	//
+	//switch cmd {
+	//case "produce":
+	//	if len(os.Args) < 4 {
+	//		log.Fatalf("produce requires a message argument")
+	//	}
+	//	message := strings.Join(os.Args[3:], " ")
+	//	if err := produceMessage(topic, message); err != nil {
+	//		log.Fatalf("produce failed: %v", err)
+	//	}
+	//case "consume":
+	//	if err := consumeTopic(topic); err != nil {
+	//		log.Fatalf("consume failed: %v", err)
+	//	}
+	//case "create-topic":
+	//	partitions := 1
+	//	replication := int16(1)
+	//	if len(os.Args) >= 4 {
+	//		if p, err := strconv.Atoi(os.Args[3]); err == nil && p > 0 {
+	//			partitions = p
+	//		} else {
+	//			log.Fatalf("invalid partitions: %v", os.Args[3])
+	//		}
+	//	}
+	//	if len(os.Args) >= 5 {
+	//		if r, err := strconv.Atoi(os.Args[4]); err == nil && r > 0 {
+	//			replication = int16(r)
+	//		} else {
+	//			log.Fatalf("invalid replicationFactor: %v", os.Args[4])
+	//		}
+	//	}
+	//	if err := createTopic(topic, partitions, replication); err != nil {
+	//		log.Fatalf("create-topic failed: %v", err)
+	//	}
+	//default:
+	//	log.Fatalf("unknown command %q", cmd)
+	//}
 }
 
 func newProducer() (sarama.SyncProducer, error) {
