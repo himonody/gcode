@@ -1,26 +1,29 @@
 # 功能模块划分（按目录/职责）
 ## 1) 接入层（WebSocket Server）
-- **`internal/websocket_server.go`**
-    - 监听端口、`Upgrade` 成 WebSocket
-    - 创建 `Link` 并进入收包循环
-    - 启动 MQ 消费者（后端推送、扩容事件）
-    - etcd 注册、续租、节点 load 上报
-    - **优雅下线**（停止接入、降权/注销、连接迁移/关闭）
+
+这一层负责 WebSocket 的接入与生命周期管理：
+- 监听端口，把 HTTP 请求升级为 WebSocket 连接
+- 为每个连接创建连接对象并进入收包循环
+- 启动 MQ 消费者用于处理后端推送、扩容等异步事件
+- 完成注册中心注册与续租，并周期上报节点负载
+- 支持**优雅下线**（停止接入、降权/注销、连接迁移/关闭）
 
 ## 2) 连接抽象与连接管理（Link / LinkManager）
-- **`internal/link/*` + `internal/link/manager.go`**
-    - `Link`：封装 net.Conn + WS session，提供 `Send/Receive/Close`、超时、缓冲、重试等
-    - `LinkManager`：
-        - 按 `bizID-userID` 生成 linkID，维护连接表
-        - 支持按用户查找连接（后端 push 定位）
-        - 维护连接数 `Len()` 供 load 上报/调度
-          -（项目里还有 GracefulClose/重定向相关逻辑，属于面试高频点）
+
+这一层把“连接”抽象成统一对象并做集中管理：
+- `Link`：封装底层连接与 WebSocket 会话，统一提供 `Send/Receive/Close`、超时、缓冲、重试等能力
+- `LinkManager`：
+  - 按 `bizID-userID` 生成 linkID，维护连接表
+  - 支持按用户查找连接（用于后端 push 精准定位）
+  - 维护连接数用于负载上报/调度
+  -（项目里还有 GracefulClose/重定向相关逻辑，属于面试高频点）
 
 ## 3) 消息处理链（LinkEventHandler）
-- **`internal/linkevent/*`**
-    - `Handler`：单条上行（前端→网关→业务后端 gRPC）+ 下行 push + ACK + 重传管理
-    - `BatchHandler + Coordinator`：将上行请求按 biz 聚合 **批量调用后端**
-    - `LimitHandler`：消息限流（`golang.org/x/time/rate`），心跳放行，超限回“被限流”消息并中断链路
+
+这一层是消息处理的主链路，采用 Handler 链式组合，把通用能力集中在网关侧：
+- 单条处理：支持上行转发（前端→网关→后端 gRPC）、下行 push、ACK 与重传管理
+- 批处理：把上行请求按业务维度聚合，形成**批量调用后端**的协调器
+- 限流：基于令牌桶的消息限流，心跳放行，超限回“被限流”消息并按策略中断链路
 - 典型能力：
     - 编解码（`codec`）、加解密（`encrypt`）
     - 幂等去重（Redis `SetNX`，按 `bizID-key`）
@@ -28,14 +31,14 @@
 
 ## 4) 后端交互层（gRPC + MQ）
 - **gRPC**（同步链路）
-    - `BackendService.OnReceive`：前端上行消息转业务后端，带超时+退避重试
+    - 负责把前端上行消息转发到业务后端，带超时与退避重试
 - **MQ 事件系统**（异步链路）
-    - `internal/event/*`
-    - `Consumer`：消费后端推送（`pushMessage`）等事件
-    - `SendToBackendEventProducer / BatchSendToBackendEventProducer`：把上行消息（或批量）投递到 MQ（削峰填谷/解耦）
+    - Consumer：消费后端推送等事件
+    - Producer：把上行消息（或批量）投递到 MQ（削峰填谷/解耦）
 
 ## 5) 注册发现与集群治理
-- **ServiceRegistry（etcd）**
+
+注册中心（etcd）用于多实例治理：
     - lease 注册/续租
     - 节点状态更新：`load = linkManager.Len()`
     - 优雅注销：降权→等待→删除（配合连接迁移）
@@ -45,9 +48,9 @@
     - `TokenLimiter` + `StartRampUp`：逐步增加可接入令牌
     - `ExponentialBackOff`：容量不足时临时拒绝并退避
 - **扩缩容**
-    - `scaleUp` 事件消费 + `DockerScaler`（从 wire 注入看）实现自动扩容与再均衡
-- **WebhookServer**
-    - 控制面入口（扩容、再均衡触发等）
+    - 消费扩容事件，触发自动扩容与再均衡
+- **控制面入口**
+    - 提供触发扩容、再均衡等运维动作的入口
 
 ---
 
@@ -107,7 +110,7 @@
 # 面试点（高频可深挖的问题清单）
 ## 1) 为什么选 `gobwas/ws`？性能点在哪里？
 - 零拷贝/更少分配、性能优先的 WS 实现
-- 压缩协商（你还打开了 `wsflate/extension.go`）在高吞吐下的 CPU vs 带宽权衡
+- 压缩协商在高吞吐下的 CPU vs 带宽权衡
 
 ## 2) Link 抽象的意义？为什么不直接在 handler 里用 conn？
 - 把超时、重试、缓冲、限流、关闭语义统一封装
@@ -121,7 +124,7 @@
 - 重试间隔、最大次数、客户端 ACK 丢失、客户端重复 ACK 的处理
 
 ## 5) 批处理两套方案怎么取舍？
-- `Coordinator`（批量 RPC） vs batch_send_to_backend.go（批量 MQ）
+- 批量 RPC（网关侧聚合后统一调用） vs 批量 MQ（网关侧聚合后统一投递）
 - 各自适合：
     - RPC：需要同步响应、强交互
     - MQ：解耦削峰、最终一致
@@ -149,7 +152,7 @@
 ## 1) 系统分层
 - **接入层**：`WebSocketServer` 监听/Upgrade/收包循环，负责启动消费者、注册中心、优雅关闭
 - **连接层**：`Link` 封装发送接收、超时/缓冲/重试；`LinkManager` 负责连接生命周期与按用户定位
-- **消息处理层**：`linkevent` 里一组 handler 形成处理链
+- **消息处理层**：一组 handler 形成处理链
     - `LimitHandler`（消息限流）
     - `Handler/BatchHandler`（解密、幂等、cmd 分发、上行转发、下行 push、ACK、重传）
     - `Coordinator`（按 biz 聚合批量转发）
@@ -246,7 +249,7 @@
 ## 7) 批处理：两种批量（Coordinator vs Batch MQ Producer）
 你项目里有两类“批”：
 - **`Coordinator`（批量 gRPC）**：按 `bizID` 聚合 `OnReceiveRequest`，到阈值/超时触发批调用
-- **batch_send_to_backend.go（批量 MQ）**：把多条上行聚合成 JSON `{msgs:[...]}` 一次 Produce
+- **批量 MQ**：把多条上行聚合成一个批次，一次投递
 
 面试讲法（trade-off）：
 - gRPC 批：减少 RPC 次数、降低 overhead，仍保留“近实时响应”
