@@ -1,179 +1,136 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	"github.com/lib/pq"
+	"github.com/xuri/excelize/v2"
+	"gorm.io/gorm"
 	"log"
-	"os"
-	"os/signal"
-
+	"strconv"
 	"strings"
-	"syscall"
-	"time"
-
-	"github.com/IBM/sarama"
 )
 
-// Configure your Kafka brokers here or via env BROKERS (comma-separated).
-var brokers = []string{"localhost:9092"}
-
 func main() {
-	a := 6.3
-	b := 6.3
-	fmt.Println(a == b)
-	//if env := os.Getenv("BROKERS"); env != "" {
-	//	brokers = strings.Split(env, ",")
-	//}
-	//
-	//if len(os.Args) < 3 {
-	//	fmt.Println("Usage:")
-	//	fmt.Println("  go run main.go produce <topic> <message>")
-	//	fmt.Println("  go run main.go consume <topic>")
-	//	fmt.Println("  go run main.go create-topic <topic> [partitions] [replicationFactor]")
-	//	return
-	//}
-	//
-	//cmd := os.Args[1]
-	//topic := os.Args[2]
-	//
-	//switch cmd {
-	//case "produce":
-	//	if len(os.Args) < 4 {
-	//		log.Fatalf("produce requires a message argument")
-	//	}
-	//	message := strings.Join(os.Args[3:], " ")
-	//	if err := produceMessage(topic, message); err != nil {
-	//		log.Fatalf("produce failed: %v", err)
-	//	}
-	//case "consume":
-	//	if err := consumeTopic(topic); err != nil {
-	//		log.Fatalf("consume failed: %v", err)
-	//	}
-	//case "create-topic":
-	//	partitions := 1
-	//	replication := int16(1)
-	//	if len(os.Args) >= 4 {
-	//		if p, err := strconv.Atoi(os.Args[3]); err == nil && p > 0 {
-	//			partitions = p
-	//		} else {
-	//			log.Fatalf("invalid partitions: %v", os.Args[3])
-	//		}
-	//	}
-	//	if len(os.Args) >= 5 {
-	//		if r, err := strconv.Atoi(os.Args[4]); err == nil && r > 0 {
-	//			replication = int16(r)
-	//		} else {
-	//			log.Fatalf("invalid replicationFactor: %v", os.Args[4])
-	//		}
-	//	}
-	//	if err := createTopic(topic, partitions, replication); err != nil {
-	//		log.Fatalf("create-topic failed: %v", err)
-	//	}
-	//default:
-	//	log.Fatalf("unknown command %q", cmd)
-	//}
+	// 1. 配置 DSN (Data Source Name)
+	// host: 数据库地址, user: 用户名, password: 密码, dbname: 数据库名, port: 端口, sslmode: 是否启用SSL
+
+	InitPg()
+	fmt.Println("数据库连接成功！")
+	if err := ImportAppProfileExcel(DB, "./a.excel"); err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println("数据写入成功！")
+
 }
 
-func newProducer() (sarama.SyncProducer, error) {
-	cfg := sarama.NewConfig()
-	cfg.Producer.Return.Successes = true
-	cfg.Producer.RequiredAcks = sarama.WaitForAll
-	cfg.Producer.Retry.Max = 5
-	cfg.Producer.Idempotent = true
-	cfg.Net.MaxOpenRequests = 1 // required for idempotent producer
-	cfg.Version = sarama.V2_5_0_0
-
-	return sarama.NewSyncProducer(brokers, cfg)
-}
-
-func produceMessage(topic, message string) error {
-	producer, err := newProducer()
+// ImportAppProfileExcel 执行 Excel 到数据库的完整导入
+func ImportAppProfileExcel(db *gorm.DB, filePath string) error {
+	f, err := excelize.OpenFile(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("无法打开Excel: %w", err)
 	}
-	defer producer.Close()
+	defer f.Close()
 
-	partition, offset, err := producer.SendMessage(&sarama.ProducerMessage{
-		Topic: topic,
-		Key:   sarama.StringEncoder(fmt.Sprintf("key-%d", time.Now().UnixNano())),
-		Value: sarama.StringEncoder(message),
-	})
+	// 获取第一个 Sheet 的所有行
+	rows, err := f.GetRows("Sheet1")
 	if err != nil {
-		return err
+		return fmt.Errorf("读取Sheet失败: %w", err)
 	}
 
-	log.Printf("sent message to %s partition=%d offset=%d", topic, partition, offset)
-	return nil
-}
+	var profiles []AppProfile
 
-func createTopic(topic string, partitions int, replication int16) error {
-	cfg := sarama.NewConfig()
-	cfg.Version = sarama.V2_5_0_0
+	// 遍历行 (假设第一行是标题头)
+	for i, row := range rows {
+		if i == 0 || len(row) == 0 {
+			continue
+		}
 
-	admin, err := sarama.NewClusterAdmin(brokers, cfg)
-	if err != nil {
-		return err
+		// 辅助函数：安全获取 Excel 列数据，防止数组越界
+		getCol := func(idx int) string {
+			if idx < len(row) {
+				return strings.TrimSpace(row[idx])
+			}
+			return ""
+		}
+
+		// 处理数字转换的辅助函数
+		toInt16 := func(s string) int16 {
+			v, _ := strconv.ParseInt(s, 10, 16)
+			return int16(v)
+		}
+		toInt32 := func(s string) int32 {
+			v, _ := strconv.ParseInt(s, 10, 32)
+			return int32(v)
+		}
+
+		// 构造模型（手动映射 Excel 列到字段）
+		profile := AppProfile{
+			// 1. 基础信息
+			Lang:         getCol(0), // 第A列
+			Nickname:     getCol(1), // 第B列
+			PhotoMainURL: getCol(2), // 第C列
+			// 相册URL数组 (假设Excel中用英文逗号或换行分隔)
+			PhotoGalleryURLs: pq.StringArray(parseArray(getCol(3))),
+
+			// 2. 分类与区域
+			CountryID:  toInt16(getCol(4)),
+			LocationID: toInt32(getCol(5)),
+			CategoryID: toInt16(getCol(6)),
+			VenueID:    toInt32(getCol(7)),
+
+			// 3. 运营状态
+			BadgeCode: toInt16(getCol(8)),
+
+			// 4. 身体规格
+			Age:      toInt16(getCol(9)),
+			HeightCM: toInt16(getCol(10)),
+			WeightKG: toInt16(getCol(11)),
+			BustSize: getCol(12),
+
+			// 5. 服务与描述
+			ServiceItems:   getCol(13),
+			BioDescription: getCol(14),
+
+			// 6. 排序优先级
+			LangSort:     toInt16(getCol(15)),
+			CountrySort:  toInt16(getCol(16)),
+			LocationSort: toInt16(getCol(17)),
+			CategorySort: toInt16(getCol(18)),
+			VenueSort:    toInt16(getCol(19)),
+
+			// 7. 状态
+			IsActive: getCol(20) != "false", // 默认为 true，除非填了 false
+		}
+
+		profiles = append(profiles, profile)
 	}
-	defer admin.Close()
 
-	err = admin.CreateTopic(topic, &sarama.TopicDetail{
-		NumPartitions:     int32(partitions),
-		ReplicationFactor: replication,
-	}, false)
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		return err
-	}
-	log.Printf("topic %s ensured with partitions=%d replication=%d", topic, partitions, replication)
-	return nil
-}
-
-func consumeTopic(topic string) error {
-	groupID := fmt.Sprintf("sarama-sample-%d", time.Now().UnixNano())
-
-	cfg := sarama.NewConfig()
-	cfg.Version = sarama.V2_5_0_0
-	cfg.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRange
-	cfg.Consumer.Offsets.Initial = sarama.OffsetNewest
-
-	group, err := sarama.NewConsumerGroup(brokers, groupID, cfg)
-	if err != nil {
-		return err
-	}
-	defer group.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	handler := consumerGroupHandler{}
-
-	// Handle interrupts to exit cleanly.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-signals
-		cancel()
-	}()
-
-	for {
-		if err := group.Consume(ctx, []string{topic}, handler); err != nil {
+	// 使用事务批量插入，每 100 条为一个批次执行一次 SQL
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.CreateInBatches(&profiles, 100).Error; err != nil {
 			return err
 		}
-		if ctx.Err() != nil {
-			return nil
-		}
-	}
+		log.Printf("成功导入 %d 条模特数据", len(profiles))
+		return nil
+	})
 }
 
-type consumerGroupHandler struct{}
-
-func (consumerGroupHandler) Setup(_ sarama.ConsumerGroupSession) error   { return nil }
-func (consumerGroupHandler) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
-func (consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	for msg := range claim.Messages() {
-		log.Printf("received message topic=%s partition=%d offset=%d key=%s value=%s",
-			msg.Topic, msg.Partition, msg.Offset, string(msg.Key), string(msg.Value))
-		session.MarkMessage(msg, "")
+// 辅助函数：将字符串按逗号切分为切片
+func parseArray(s string) []string {
+	if s == "" {
+		return []string{}
 	}
-	return nil
+	// 处理常见的几种分隔符：逗号、分号、换行
+	s = strings.ReplaceAll(s, "，", ",")
+	s = strings.ReplaceAll(s, "\n", ",")
+	parts := strings.Split(s, ",")
+
+	var res []string
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			res = append(res, trimmed)
+		}
+	}
+	return res
 }
